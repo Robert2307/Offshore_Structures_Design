@@ -96,7 +96,7 @@ for g in range(0, len(leg_indices), 5):
         elements[i]["length"] = round(float(full_leg_length), 3)
 
 
-# Plot side and top views
+# plot side and top views
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
 # side view (XZ)
@@ -161,9 +161,7 @@ plt.tight_layout()
 plt.show()
 
 
-# -----------------------------
-# Build table ONCE from computed elements
-# -----------------------------
+# Build table for the elements
 df = pd.DataFrame(elements).rename(columns={
     "id": "Number",
     "type": "Element type",
@@ -172,7 +170,7 @@ df = pd.DataFrame(elements).rename(columns={
 
 df["read_order"] = np.arange(len(df))
 
-# Normalize element types
+# Normalize the element types
 df["Element type"] = (
     df["Element type"]
     .astype(str)
@@ -186,23 +184,19 @@ df["Element type"] = (
     })
 )
 
-# Numeric safety
+# Numeric safety check
 df["Number"] = pd.to_numeric(df["Number"], errors="coerce")
 df["L_m"] = pd.to_numeric(df["L_m"], errors="coerce")
 df["L_eff_m"] = df["L_m"]
 
-# -----------------------------
-# Constants
-# -----------------------------
+# parameters
 in_to_m = 39.37007874
 gamma_s = 7850.0       # kg/m^3
 x = {"H": 0.023, "K": 0.029}
 d_over_t = {"H": 40.0, "K": 40.0, "Leg": 60.0}
 E = 210e9              # Pa (N/m^2)
 
-# -----------------------------
-# Diameter
-# -----------------------------
+# Leg diameter
 df["D_m"] = np.where(
     df["Element type"] == "Leg",
     60 / in_to_m,
@@ -212,9 +206,7 @@ df["D_m"] = np.where(
 df["D(inches)"] = df["D_m"] * in_to_m
 df["Chosen diameter (inches)"] = np.ceil(df["D(inches)"])
 
-# -----------------------------
-# D/t logic (last 4 H/K = 25)
-# -----------------------------
+# D/t ratio for the top 4 H and K elements (partially submerged)
 df["D_over_t"] = df["Element type"].map(d_over_t)
 
 hk_last4_idx = (
@@ -226,18 +218,11 @@ hk_last4_idx = (
 
 df.loc[hk_last4_idx, "D_over_t"] = 25.0
 
-# -----------------------------
-# Thickness (use chosen diameter)
-# -----------------------------
+# Thickness
 df["Thickness(inches)"] = df["Chosen diameter (inches)"] / df["D_over_t"]
 df["Chosen thickness (inches)"] = np.ceil(df["Thickness(inches)"] / 0.125) * 0.125
+df.loc[df["Element type"].eq("Leg"), "Chosen thickness (inches)"] = 1.5 # All legs chosen thickness
 
-# All legs chosen thickness
-df.loc[df["Element type"].eq("Leg"), "Chosen thickness (inches)"] = 1.5
-
-# -----------------------------
-# Section properties
-# -----------------------------
 D = df["Chosen diameter (inches)"]
 t = df["Chosen thickness (inches)"]
 
@@ -247,12 +232,10 @@ df["Inertia (inch4)"] = (math.pi / 8.0) * D * t * (D**2 + t**2)
 # Convert area to m^2
 A_m2 = df["Cross section area (inch2)"] / (in_to_m**2)
 
-# Mass in TONS (kept for reporting)
+# Mass in tons (kept for reporting)
 df["Mass (t)"] = (A_m2 * df["L_eff_m"] * gamma_s) / 1000.0
 
-# -----------------------------
-# Output sorted
-# -----------------------------
+# Sort output by element
 out = df.sort_values("Number").reset_index(drop=True)
 
 print(out[[
@@ -261,10 +244,8 @@ print(out[[
 ]].round(3))
 
 
-# =====================================================
-#        EQUIVALENT BEAM (FULLY SI-CONSISTENT)
-# =====================================================
 
+# Equivalent prismatic beam properties and natural frequency
 def first_frequency_cantilever(EI, m, L, Mtop):
     """
     EI    : N·m^2
@@ -297,9 +278,7 @@ def section_inertia_from_leg_layout(z_level, nodes_3d, leg_node_ids, A_leg_m2):
     return 0.5 * (I_x + I_y)
 
 
-# -----------------------------
-# Total mass in KG (FIXED)
-# -----------------------------
+# Total mass
 M_legs_total_kg = (
     out.loc[out["Element type"].eq("Leg"), "Mass (t)"].sum() * 1000.0
 )
@@ -355,12 +334,11 @@ I_bottom_i = I_levels[:-1]
 I_top_i = I_levels[1:]
 I_mean_i = 0.5 * (I_top_i + I_bottom_i)
 
-# -----------------------------
+
 # Equivalent properties
-# -----------------------------
 L_total = np.sum(h_i)
 
-# Top mass (CHANGE if already kg)
+# Top mass in kg
 Mtop_kg = 2072 * 1000.0   
 
 # Uniform distributed mass (kg/m)  
@@ -372,15 +350,12 @@ EI_eq = E * (np.sum(I_mean_i * h_i) / L_total)
 # Frequency
 f1 = first_frequency_cantilever(EI_eq, m_eq, L_total, Mtop_kg)
 
-# -----------------------------
-# Results
-# -----------------------------
+
+# Print results
 print("\nEquivalent beam results:")
 print(f"M_legs_total [kg]     = {M_legs_total_kg:,.2f}")
 print(f"M_bracing_total [kg]  = {M_bracing_total_kg:,.2f}")
 print(f"m_eq [kg/m]           = {m_eq:,.2f}")
 print(f"EI_eq [N·m^2]         = {EI_eq:,.3e}")
 print(f"f1 [Hz]               = {f1:,.3f}")
-
 print(f"Full mass of substructure [KN]  = {(M_bracing_total_kg + M_legs_total_kg)/100:,.2f}")
-#print(f"Dry mass of substructure [KN]  = {M_bracing_total_kg + M_legs_total_kg:,.2f}/100")
