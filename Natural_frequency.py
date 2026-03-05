@@ -157,8 +157,8 @@ for nid, (x, y, z) in nodes_3d.items():
 
 ax3d.set_box_aspect([1, 1, 1])
 
-plt.tight_layout()
-plt.show()
+# plt.tight_layout()
+# plt.show()
 
 
 # Build table for the elements
@@ -240,7 +240,7 @@ out = df.sort_values("Number").reset_index(drop=True)
 
 print(out[[
     "Element type", "L_m", "Chosen diameter (inches)", 
-    "Chosen thickness (inches)", "Mass (t)", "Inertia (inch4)"
+    "Chosen thickness (inches)"
 ]].round(3))
 
 
@@ -288,20 +288,20 @@ M_bracing_total_kg = (
 )
 
 # Water mass inside leg (kg)
-rho_water = 1000.0  # kg/m^3
-leg_mask = out["Element type"].eq("Leg")
+# rho_water = 1000.0  # kg/m^3
+# leg_mask = out["Element type"].eq("Leg")
 
-D_leg_m = out.loc[leg_mask, "Chosen diameter (inches)"] / in_to_m
-t_leg_m = out.loc[leg_mask, "Chosen thickness (inches)"] / in_to_m
+# D_leg_m = out.loc[leg_mask, "Chosen diameter (inches)"] / in_to_m
+# t_leg_m = out.loc[leg_mask, "Chosen thickness (inches)"] / in_to_m
 
-D_inner_m = (D_leg_m - 2.0 * t_leg_m).clip(lower=0.0)
-A_inner_m2 = (math.pi / 4.0) * (D_inner_m ** 2)
+# D_inner_m = (D_leg_m - 2.0 * t_leg_m).clip(lower=0.0)
+# A_inner_m2 = (math.pi / 4.0) * (D_inner_m ** 2)
 
-# Sum water volume over all leg members
-V_water_legs_m3 = (A_inner_m2 * out.loc[leg_mask, "L_eff_m"]).sum()
-M_water_legs_kg = rho_water * V_water_legs_m3
+# # Sum water volume over all leg members
+# V_water_legs_m3 = (A_inner_m2 * out.loc[leg_mask, "L_eff_m"]).sum()
+# M_water_legs_kg = rho_water * V_water_legs_m3
 
-M_total_kg = M_legs_total_kg + M_bracing_total_kg + M_water_legs_kg
+M_total_kg = M_legs_total_kg + M_bracing_total_kg #+ M_water_legs_kg
 
 # -----------------------------
 # Leg area in m^2
@@ -355,7 +355,9 @@ f1 = first_frequency_cantilever(EI_eq, m_eq, L_total, Mtop_kg)
 print("\nEquivalent beam results:")
 print(f"M_legs_total [kg]     = {M_legs_total_kg:,.2f}")
 print(f"M_bracing_total [kg]  = {M_bracing_total_kg:,.2f}")
+# print(f"M_water_legs [kg]     = {M_water_legs_kg:,.2f}")
+print(f"M_total [kg]          = {M_total_kg:,.2f}")
+print(f"Mtop [kg]             = {Mtop_kg:,.2f}")
 print(f"m_eq [kg/m]           = {m_eq:,.2f}")
 print(f"EI_eq [N·m^2]         = {EI_eq:,.3e}")
 print(f"f1 [Hz]               = {f1:,.3f}")
-print(f"Full mass of substructure [KN]  = {(M_bracing_total_kg + M_legs_total_kg)/100:,.2f}")
