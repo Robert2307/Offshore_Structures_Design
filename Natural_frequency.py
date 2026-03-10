@@ -73,6 +73,16 @@ def norm_type(t: str) -> str:
         return "K"
     return s
 
+# Keep REAL segment lengths from geometry.
+# REMOVE the old block that grouped legs in 5 and set all segment lengths = full leg length.
+
+# Optional quick check: expected 4 physical legs at base elevation
+leg_elems_tmp = [e for e in elements if norm_type(e["type"]) == "Leg"]
+leg_nodes_tmp = sorted(set(n for e in leg_elems_tmp for n in e["nodes"]))
+zmin_leg = min(nodes_3d[n][2] for n in leg_nodes_tmp)
+base_leg_nodes = [n for n in leg_nodes_tmp if np.isclose(nodes_3d[n][2], zmin_leg)]
+print(f"Detected base leg nodes: {len(base_leg_nodes)} (expected 4)")
+
 # use the total length of the legs, instead of each separate segment
 leg_indices = [i for i, e in enumerate(elements) if norm_type(e["type"]) == "Leg"]
 
@@ -286,6 +296,7 @@ M_legs_total_kg = (
 M_bracing_total_kg = (
     out.loc[out["Element type"].isin(["H", "K"]), "Mass (t)"].sum() * 1000.0
 )
+Mtop_kg = 2027*1000.0 # (kg)
 
 # Water mass inside leg (kg)
 # rho_water = 1000.0  # kg/m^3
@@ -301,51 +312,122 @@ M_bracing_total_kg = (
 # V_water_legs_m3 = (A_inner_m2 * out.loc[leg_mask, "L_eff_m"]).sum()
 # M_water_legs_kg = rho_water * V_water_legs_m3
 
+<<<<<<< Updated upstream
 M_total_kg = M_legs_total_kg + M_bracing_total_kg #+ M_water_legs_kg
+=======
+M_total_kg = M_legs_total_kg + M_bracing_total_kg + M_water_legs_kg + Mtop_kg
+>>>>>>> Stashed changes
 
 # -----------------------------
 # Leg area in m^2
 # -----------------------------
-A_leg_m2 = (
-    out.loc[out["Element type"].eq("Leg"),
-            "Cross section area (inch2)"].mean()
-    / (in_to_m**2)
-)
+# --- Build element property maps (SI) ---
+prop = out.set_index("Number")
+A_by_id = (prop["Cross section area (inch2)"] / (in_to_m**2)).to_dict()   # m^2
+I_by_id = (prop["Inertia (inch4)"] / (in_to_m**4)).to_dict()              # m^4
 
-# Leg nodes
-leg_elems = [e for e in elements if norm_type(e["type"]) == "Leg"]
-leg_node_ids = sorted(set([n for e in leg_elems for n in e["nodes"]]))
+# --- Collect leg segments with geometry + section properties ---
+leg_segments = []
+for e in elements:
+    if norm_type(e["type"]) != "Leg":
+        continue
 
-# Elevations
-z_levels = sorted(set([nodes_3d[n][2] for n in leg_node_ids]))
+    eid = int(e["id"])
+    n1, n2 = e["nodes"]
+    x1, y1, z1 = nodes_3d[n1]
+    x2, y2, z2 = nodes_3d[n2]
+
+    if np.isclose(z1, z2):
+        continue  # skip horizontal/non-vertical leg pieces if any
+
+    leg_segments.append({
+        "id": eid,
+        "x1": x1, "y1": y1, "z1": z1,
+        "x2": x2, "y2": y2, "z2": z2,
+        "zbot": min(z1, z2),
+        "ztop": max(z1, z2),
+        "A": float(A_by_id[eid]),
+        "I_local": float(I_by_id[eid]),
+    })
+
+if not leg_segments:
+    raise ValueError("No leg segments found.")
+
+# Elevation breaks from leg nodes
+z_levels = sorted(set([s["z1"] for s in leg_segments] + [s["z2"] for s in leg_segments]))
 if len(z_levels) < 2:
-    raise ValueError("Need at least two leg elevation levels")
+    raise ValueError("Need at least two leg elevation levels.")
 
-h_i = np.diff(z_levels)
+def interp_xy(seg, z):
+    t = (z - seg["z1"]) / (seg["z2"] - seg["z1"])
+    x = seg["x1"] + t * (seg["x2"] - seg["x1"])
+    y = seg["y1"] + t * (seg["y2"] - seg["y1"])
+    return x, y
 
-# Section inertia at levels
-I_levels = np.array(
-    [section_inertia_from_leg_layout(z, nodes_3d, leg_node_ids, A_leg_m2)
-     for z in z_levels],
-    dtype=float
-)
+h_i = []
+I_story = []
 
-I_bottom_i = I_levels[:-1]
-I_top_i = I_levels[1:]
-I_mean_i = 0.5 * (I_top_i + I_bottom_i)
+tol = 1e-9
+for z0, z1 in zip(z_levels[:-1], z_levels[1:]):
+    h = z1 - z0
+    if h <= 0:
+        continue
 
+    zmid = 0.5 * (z0 + z1)
+
+    # leg segments that span this storey
+    active = [s for s in leg_segments if (s["zbot"] <= z0 + tol and s["ztop"] >= z1 - tol)]
+    if len(active) < 4:
+        raise ValueError(f"At z=[{z0:.3f},{z1:.3f}] only {len(active)} active leg segments found (expected 4).")
+
+    # use first 4 if extras exist (defensive)
+    active = active[:4]
+
+    xy = np.array([interp_xy(s, zmid) for s in active], dtype=float)
+    A = np.array([s["A"] for s in active], dtype=float)
+    I_loc = np.array([s["I_local"] for s in active], dtype=float)
+
+    x_c = np.average(xy[:, 0], weights=A)
+    y_c = np.average(xy[:, 1], weights=A)
+
+    I_x = np.sum(I_loc + A * (xy[:, 1] - y_c) ** 2)
+    I_y = np.sum(I_loc + A * (xy[:, 0] - x_c) ** 2)
+    Ieq_sec = 0.5 * (I_x + I_y)  # m^4
+
+    h_i.append(h)
+    I_story.append(Ieq_sec)
+
+h_i = np.array(h_i, dtype=float)
+I_story = np.array(I_story, dtype=float)
+
+<<<<<<< Updated upstream
 
 # Equivalent properties
 L_total = np.sum(h_i)
 
 # Top mass in kg
 Mtop_kg = 2072 * 1000.0   
+=======
+L_total = np.sum(h_i)
 
-# Uniform distributed mass (kg/m)  
-m_eq = M_total_kg + Mtop_kg / L_total
+# Equivalent EI from equal tip deflection of variable-EI cantilever:
+# delta = P * integral((L-z)^2/(E*I(z)) dz)
+# Ieq = L^3 / (3 * integral((L-z)^2/I(z) dz))
+z_bot = np.concatenate(([0.0], np.cumsum(h_i)[:-1]))
+z_top = np.cumsum(h_i)
+z_mid = 0.5 * (z_bot + z_top)
+>>>>>>> Stashed changes
+
+den = np.sum(((L_total - z_mid) ** 2 / I_story) * h_i)
+I_eq = (L_total**3) / (3.0 * den)
+EI_eq = E * I_eq
+
+# Distributed mass must be kg/m (Mtop handled separately in frequency formula)
+m_eq = M_total_kg / L_total
+print(L_total)
 
 # Equivalent stiffness (N·m^2)
-EI_eq = E * (np.sum(I_mean_i * h_i) / L_total)
+# EI_eq = E * (np.sum(I_mean_i * h_i) / L_total)
 
 # Frequency
 f1 = first_frequency_cantilever(EI_eq, m_eq, L_total, Mtop_kg)
